@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildIndex, search } from './search.ts';
+import { FIXTURE_LABEL } from './__fixtures__/label.ts';
+import { hydrate } from './effects.ts';
+import { buildDrug } from './extract.ts';
+import { buildIndex, highlight, search, searchText } from './search.ts';
 import type { Drug } from './types.ts';
 
 /** Names only: search never reads effects. */
@@ -47,5 +50,52 @@ describe('drug search', () => {
     expect(ids('s').filter((id) => id === 'semaglutide')).toHaveLength(1);
     expect(ids('zzzzqq')).toEqual([]);
     expect(ids('   ')).toEqual([]);
+  });
+});
+
+describe('full-text search', () => {
+  const [fixture] = hydrate({
+    kind: 'fixture',
+    generatedAt: '',
+    notice: '',
+    drugs: [buildDrug({ id: 'fixturemab', name: 'Fixturemab' }, FIXTURE_LABEL, [FIXTURE_LABEL, { ...FIXTURE_LABEL, set_id: 'other' }])],
+  });
+  const full = buildIndex([fixture, drug('metformin', 'Metformin', ['Glucophage'])]);
+
+  it('finds a mapped term and points at its region', () => {
+    const { mentions, total } = searchText(full, 'pancreatitis');
+    expect(total).toBe(1);
+    expect(mentions[0]).toMatchObject({ region: 'pancreas', term: 'Pancreatitis' });
+    expect(mentions[0].effect.type).toBe('warning');
+  });
+
+  it('matches word prefixes and requires every word in the same statement', () => {
+    expect(searchText(full, 'pancrea').total).toBe(1);
+    expect(searchText(full, 'acute pancreatitis').mentions[0].region).toBe('pancreas');
+    expect(searchText(full, 'pancreatitis zebra').total).toBe(0);
+  });
+
+  it('marks the matched words in the snippet', () => {
+    const [m] = searchText(full, 'hypoglycemia pediatric').mentions;
+    expect(m.snippet.filter((s) => s.mark).map((s) => s.text.toLowerCase())).toEqual(['hypoglycemia', 'pediatric']);
+  });
+
+  it('ignores stopwords and very short queries', () => {
+    expect(searchText(full, 'of').total).toBe(0);
+    expect(searchText(full, 'the and').total).toBe(0);
+  });
+
+  it('searches drug classes alongside names', () => {
+    const [top] = search(full, 'receptor agonist');
+    expect(top.drug.id).toBe('fixturemab');
+    expect(top.matched).toBe('Fixture Receptor Agonist');
+  });
+
+  it('highlights word prefixes only', () => {
+    expect(highlight('Nausea and nauseated', ['nause'])).toEqual([
+      { text: 'Nausea', mark: true },
+      { text: ' and ', mark: false },
+      { text: 'nauseated', mark: true },
+    ]);
   });
 });

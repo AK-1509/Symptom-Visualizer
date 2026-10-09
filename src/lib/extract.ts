@@ -3,7 +3,7 @@
  * Used by the data build script (scripts/build-data.ts) and unit tests; never by the browser.
  */
 import { matchTerms, type TermMatch } from './anatomy.ts';
-import type { AgeGroup, AgeNote, EffectType, ExtractedEffect, LabelSource, Region, StoredDrug } from './types.ts';
+import type { AgeGroup, AgeNote, EffectType, ExtractedEffect, LabelSource, Region, Sex, SexNote, StoredDrug } from './types.ts';
 
 /** The subset of an openFDA /drug/label.json result this pipeline reads. */
 export interface OpenFdaLabel {
@@ -19,6 +19,10 @@ export interface OpenFdaLabel {
   stop_use?: string[];
   pediatric_use?: string[];
   geriatric_use?: string[];
+  pregnancy?: string[];
+  use_in_specific_populations?: string[];
+  pharmacokinetics?: string[];
+  clinical_pharmacology?: string[];
   openfda?: {
     brand_name?: string[];
     generic_name?: string[];
@@ -68,6 +72,8 @@ export function cleanText(text: string): string {
     .trim();
 }
 
+const IMPERATIVES =
+  /^(Discontinue|Advise|Monitor|Consider|Avoid|Instruct|Inform|Verify|Counsel|Assess|Evaluate|Obtain|Do|Reduce|Start|Stop|Administer|Measure|Check|Perform|Initiate|Withhold|Educate|Tell)$/;
 const CONNECTORS = new Set(['of', 'and', 'or', 'in', 'with', 'the', 'to', 'for', 'a', 'an', 'on', 'at', 'by', 'from', 'vs', 'during', '&']);
 const isCapitalized = (w: string) => /^[A-Z(]/.test(w);
 const isTitleCase = (text: string) => text.split(' ').every((w) => isCapitalized(w) || CONNECTORS.has(w));
@@ -93,6 +99,8 @@ export function splitHeading(text: string): { title?: string; body: string } {
   while (start > 0 && CONNECTORS.has(words[start])) start--;
   // "... Reactions | Use of OZEMPIC has": a connector before the start means the sentence began one word earlier.
   if (start > 1 && CONNECTORS.has(words[start - 1]) && isCapitalized(words[start - 2])) start -= 2;
+  // An imperative verb starts the sentence, not the heading ("Reproductive Potential | Discontinue OZEMPIC in women").
+  while (start > 0 && IMPERATIVES.test(words[start - 1])) start--;
   if (start < 1) return { body: text };
   const title = words.slice(0, start).join(' ');
   if (/[.:;]$/.test(title) || title.length > 90) return { body: text };
@@ -200,6 +208,21 @@ export function detectAges(sentence: string): AgeGroup[] | undefined {
 /** Trial-population descriptions in Adverse Reactions are not reactions ("At baseline, 8.9% ... reported retinopathy"). */
 const POPULATION = /\b(at baseline|mean age|baseline characteristics|were (male|female|white)|identified as|demographics?)\b/i;
 
+const FEMALE =
+  /\b(women|woman|females?|girls?|pregnan\w*|lactat\w*|breastfe\w*|breast-fe\w*|nursing mothers?|menstrua\w*|menopaus\w*|postmenopausal|premenopausal|uter\w*|ovar\w*|vagin\w*|vulv\w*|endometri\w*|amenorrh\w*|dysmenorrh\w*|fetus|fetal)\b/i;
+const MALE = /\b(men|man|males?|boys?|prostat\w*|testic\w*|testes|erectile|erections?|priapism|ejaculat\w*|gynecomastia|scrot\w*|penile)\b/i;
+
+/**
+ * The sex a sentence is specific to, from the people it names ("in women", "males") or anatomy only one sex has
+ * (pregnancy, prostate). A sentence naming both, or neither, applies to both. Fetal harm is tied to pregnancy.
+ */
+export function detectSexes(sentence: string): Sex[] | undefined {
+  const female = FEMALE.test(sentence);
+  const male = MALE.test(sentence);
+  if (female === male) return undefined;
+  return female ? ['afab'] : ['amab'];
+}
+
 const EXCLUDED_THERAPEUTIC = /\b(not indicated|not recommended|has not been (studied|established)|have not been (studied|established)|not for use|limitations? of use|should not be used)\b/i;
 
 function truncate(sentence: string): string {
@@ -233,6 +256,7 @@ interface Hit {
   /** The sentence names the region itself rather than inheriting it from its subsection title. */
   direct: boolean;
   ages?: AgeGroup[];
+  sexes?: Sex[];
   order: number;
 }
 
@@ -294,6 +318,7 @@ export function extractEffects(label: OpenFdaLabel): ExtractedEffect[] {
           }
           if (!byRegion.size) continue;
           const ages = sentenceAges;
+          const sexes = detectSexes(sentence);
           for (const [region, terms] of byRegion) {
             hits.push({
               region,
@@ -307,6 +332,7 @@ export function extractEffects(label: OpenFdaLabel): ExtractedEffect[] {
               clean: !isTableLike(sentence),
               direct: own.has(region),
               ages,
+              sexes,
               order,
             });
           }
@@ -335,7 +361,7 @@ function stripBoxedTitle(segments: Segment[]): [Segment[], string | undefined] {
 function groupHits(hits: Hit[]): ExtractedEffect[] {
   const groups = new Map<string, Hit[]>();
   for (const h of hits) {
-    const key = [h.region, h.type, h.section, h.ages?.join(',') ?? ''].join('|');
+    const key = [h.region, h.type, h.section, h.ages?.join(',') ?? '', h.sexes?.join(',') ?? ''].join('|');
     const list = groups.get(key) ?? [];
     list.push(h);
     groups.set(key, list);
@@ -373,6 +399,7 @@ function groupHits(hits: Hit[]): ExtractedEffect[] {
     if (lead.number) effect.sectionNumber = lead.number;
     if (lead.title) effect.sectionTitle = lead.title;
     if (lead.ages) effect.ages = lead.ages;
+    if (lead.sexes) effect.sexes = lead.sexes;
     if (lead.boxed) effect.boxed = true;
     effects.push(effect);
   }
@@ -400,6 +427,63 @@ export function extractAgeNotes(label: OpenFdaLabel): StoredDrug['ageNotes'] {
   const geriatric = ageNote(label.geriatric_use, 'Geriatric Use', '8');
   if (!pediatric && !geriatric) return undefined;
   return { ...(pediatric && { pediatric }), ...(geriatric && { geriatric }) };
+}
+
+/** The first one or two prose sentences of a passage, as a note. */
+const BOILERPLATE = /\bregistry\b|\b1-8\d\d\b|www\.|https?:|encourage|background risk|general population/i;
+
+const NOTE_HEADINGS = /^(?:Risk Summary|Clinical Considerations|Human Data|Animal Data|Data|Contraception|Infertility|Pregnancy Testing)\s+(?=[A-Z])/;
+
+function noteText(text: string): string | undefined {
+  const sentences = splitSentences(text)
+    .map((s) => s.replace(NOTE_HEADINGS, ''))
+    .filter((s) => !isTableLike(s) && s.length >= MIN_EXCERPT && !BOILERPLATE.test(s));
+  if (!sentences.length) return undefined;
+  let out = sentences[0];
+  if (sentences[1] && out.length + sentences[1].length < MAX_EXCERPT) out += ` ${sentences[1]}`;
+  return truncate(out);
+}
+
+/**
+ * Sex-specific context from the label: Pregnancy (8.1) and Lactation (8.2) for AFAB, Females and Males of
+ * Reproductive Potential (8.3) split by its "Females" / "Males" run-in headings, and any male/female
+ * difference stated in Pharmacokinetics (12.3), which is relevant to both.
+ */
+export function extractSexNotes(label: OpenFdaLabel): SexNote[] | undefined {
+  const notes: SexNote[] = [];
+  const populations = [...(label.pregnancy ?? []), ...(label.use_in_specific_populations ?? [])].join(' ');
+  const seen = new Set<string>();
+  for (const seg of segmentSection(populations, '8')) {
+    if (!seg.number || seen.has(seg.number) || seg.title === HIGHLIGHTS) continue;
+    const title = seg.title ?? '';
+    if (/^Pregnancy/i.test(title) || /^Lactation|^Nursing Mothers/i.test(title)) {
+      seen.add(seg.number);
+      const text = noteText(seg.text);
+      const topic = /^Pregnancy/i.test(title) ? 'Pregnancy' : 'Lactation';
+      if (text) notes.push({ topic, sexes: ['afab'], text, section: topic, sectionNumber: seg.number });
+    } else if (/Reproductive Potential/i.test(title)) {
+      seen.add(seg.number);
+      // Run-in "Females" / "Males" headings ("Contraception Females Advise females of reproductive potential ...").
+      const parts = seg.text.split(/\s(?=(?:Females|Males)\s+(?:[A-Z]|of|who|should|must|with|taking|treated))/);
+      for (const raw of parts) {
+        // A part that opens with the "Females" / "Males" heading belongs to that sex even when it mentions partners.
+        const heading = raw.match(/^(Females|Males)\s+/);
+        const part = heading ? raw.slice(heading[0].length) : raw;
+        const sexes: Sex[] | undefined = heading ? [heading[1] === 'Males' ? 'amab' : 'afab'] : detectSexes(part);
+        const text = noteText(part);
+        if (!text) continue;
+        const topic = sexes?.[0] === 'amab' ? 'Males of reproductive potential' : sexes?.[0] === 'afab' ? 'Females of reproductive potential' : 'Reproductive potential';
+        if (!notes.some((n) => n.topic === topic))
+          notes.push({ topic, ...(sexes && { sexes }), text, section: 'Females and Males of Reproductive Potential', sectionNumber: seg.number });
+      }
+    }
+  }
+  const pk = cleanText([...(label.pharmacokinetics ?? []), ...(label.clinical_pharmacology ?? [])].join(' '));
+  // The first sentence after a "Gender" / "Sex" / "Male and Female Patients" heading.
+  const m = pk.match(/(?:^|\s)(?:Gender|Sex|Male and Female (?:Patients|Subjects))\s*[:\-]?\s+([A-Z][\s\S]{20,400}?\.)(?=\s|$)/);
+  if (m && (FEMALE.test(m[1]) || MALE.test(m[1]) || /gender|\bsex\b/i.test(m[1])))
+    notes.push({ topic: 'Male and female differences', text: truncate(m[1]), section: 'Pharmacokinetics', sectionNumber: '12.3' });
+  return notes.length ? notes : undefined;
 }
 
 export function labelSource(label: OpenFdaLabel): LabelSource {
@@ -552,5 +636,7 @@ export function buildDrug(config: DrugConfig, label: OpenFdaLabel, brandSource: 
   if (cls) drug.drugClass = cls;
   const notes = extractAgeNotes(label);
   if (notes) drug.ageNotes = notes;
+  const sexNotes = extractSexNotes(label);
+  if (sexNotes) drug.sexNotes = sexNotes;
   return drug;
 }

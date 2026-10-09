@@ -91,7 +91,7 @@ test('keyboard only: search, select and open a region', async ({ page }) => {
 test('graceful states: no drug found, unmapped region', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('combobox').fill('qqqzzz');
-  await expect(page.getByText(/No drug found/)).toBeVisible();
+  await expect(page.getByText(/No drug or label text found/)).toBeVisible();
   await addDrug(page, 'sildenafil', 'Sildenafil');
   await page.locator('#thyroid').click();
   await expect(page.getByText(/No effect is mapped to the thyroid/)).toBeVisible();
@@ -108,4 +108,40 @@ test('layout: body, search and details stay usable at narrow widths', async ({ p
   expect(body.x + body.width).toBeLessThanOrEqual(viewport.width + 1);
   const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(scrollWidth).toBeLessThanOrEqual(viewport.width);
+});
+
+test('full-text search: a label-text result adds the drug and opens the region', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('combobox').fill('hepatotoxicity');
+  await expect(page.getByText('In label text')).toBeVisible();
+  await page.getByRole('option', { name: /Acetaminophen · Liver/ }).click();
+  await expect(card(page, 'Acetaminophen', true)).toBeVisible();
+  const details = page.getByRole('complementary', { name: 'Details' });
+  await expect(details.getByRole('heading', { name: 'Liver' })).toBeVisible();
+  await expect(details.getByText('Hepatotoxicity').first()).toBeVisible();
+
+  // Classes are searchable too.
+  await page.getByRole('combobox').fill('ssri');
+  await expect(page.getByRole('option', { name: /Sertraline.*Selective serotonin reuptake inhibitor/ })).toBeVisible();
+});
+
+test('sex: label statements and notes follow AMAB / AFAB', async ({ page }) => {
+  await page.goto('/');
+  await addDrug(page, 'viagra', 'Sildenafil');
+  // The Viagra label's indication is worded for men.
+  await expect(page.locator('#reproductive')).toHaveClass(/is-therapeutic/);
+  await page.getByRole('radio', { name: 'AFAB' }).click();
+  await expect(page.locator('#reproductive')).not.toHaveClass(/is-therapeutic/);
+  await page.locator('#reproductive').click();
+  await expect(page.getByText(/statements? for another age group or sex/)).toBeVisible();
+
+  // AFAB shows the label's pregnancy and lactation text.
+  await addDrug(page, 'sema', 'Semaglutide');
+  const details = page.getByRole('complementary', { name: 'Details' });
+  await details.getByRole('button', { name: 'Close details' }).click();
+  await card(page, 'Semaglutide').click();
+  await expect(details.getByText('AFAB label notes')).toBeVisible();
+  await expect(details.getByText(/^Pregnancy/).first()).toBeVisible();
+  await page.getByRole('radio', { name: 'AMAB' }).click();
+  await expect(details.getByText('AFAB label notes')).toHaveCount(0);
 });

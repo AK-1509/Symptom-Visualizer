@@ -4,6 +4,8 @@ import {
   buildDrug,
   collectBrands,
   detectAges,
+  detectSexes,
+  extractSexNotes,
   extractEffects,
   normalizeGeneric,
   pickLabel,
@@ -109,6 +111,30 @@ describe('extraction helpers', () => {
     expect(detectAges('in adults and pediatric patients')).toEqual(['adult', 'pediatric']);
     expect(detectAges('patients 65 years of age and older')).toEqual(['geriatric']);
     expect(detectAges('in patients with renal impairment')).toBeUndefined();
+  });
+
+  it('detects sex-specific wording', () => {
+    expect(detectSexes('Exposure was higher in women.')).toEqual(['afab']);
+    expect(detectSexes('may cause fetal harm when administered to a pregnant woman')).toEqual(['afab']);
+    expect(detectSexes('Erectile dysfunction was reported.')).toEqual(['amab']);
+    expect(detectSexes('in both men and women')).toBeUndefined();
+    expect(detectSexes('Nausea was reported.')).toBeUndefined();
+    expect(detectSexes('the treatment regimen and human data')).toBeUndefined();
+  });
+
+  it('extracts pregnancy, lactation and male/female notes without registry boilerplate', () => {
+    expect(extractSexNotes(FIXTURE_LABEL)).toEqual([
+      { topic: 'Pregnancy', sexes: ['afab'], text: 'Based on animal data, ZOVAREX may cause fetal harm when given to a pregnant woman.', section: 'Pregnancy', sectionNumber: '8.1' },
+      { topic: 'Lactation', sexes: ['afab'], text: 'There are no data on the presence of fixturemab in human milk.', section: 'Lactation', sectionNumber: '8.2' },
+      { topic: 'Male and female differences', text: 'Exposure was 15% higher in women than in men.', section: 'Pharmacokinetics', sectionNumber: '12.3' },
+    ]);
+  });
+
+  it('keeps an imperative verb with its sentence after a heading', () => {
+    expect(splitHeading('Reproductive Potential Discontinue ZOVAREX in women before a planned pregnancy.')).toEqual({
+      title: 'Reproductive Potential',
+      body: 'Discontinue ZOVAREX in women before a planned pregnancy.',
+    });
   });
 
   it('normalizes generic names by stripping salts', () => {

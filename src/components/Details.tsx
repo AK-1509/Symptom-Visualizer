@@ -1,12 +1,23 @@
 import { useState } from 'react';
 import { REGION_INFO } from '../lib/anatomy.ts';
-import { AGE_LABEL, ageGroup, isAgeSpecificMatch, regionDetails, regionStates, visualType } from '../lib/effects.ts';
-import type { Drug, Effect, EffectType, Region } from '../lib/types.ts';
+import {
+  AGE_LABEL,
+  SEX_LABEL,
+  ageGroup,
+  isAgeSpecificMatch,
+  isSexSpecificMatch,
+  regionDetails,
+  regionStates,
+  sexNotesFor,
+  visualType,
+  type Viewer,
+} from '../lib/effects.ts';
+import type { Drug, Effect, EffectType, Region, SexNote } from '../lib/types.ts';
 
 interface DetailsProps {
   drug: Drug | null;
   region: Region | null;
-  age: number;
+  viewer: Viewer;
   /** Other active drugs with an applicable effect in the selected region. */
   others: Drug[];
   onSelectRegion: (r: Region) => void;
@@ -31,16 +42,21 @@ function Glyph({ type }: { type: EffectType }) {
   return <span className={`glyph glyph-${visualType(type)}`} aria-hidden="true" />;
 }
 
-function EffectItem({ effect, age, muted }: { effect: Effect; age: number; muted?: boolean }) {
-  const emphasized = !muted && isAgeSpecificMatch(effect, age);
+function EffectItem({ effect, viewer, muted }: { effect: Effect; viewer: Viewer; muted?: boolean }) {
+  const emphasized = !muted && (isAgeSpecificMatch(effect, viewer.age) || isSexSpecificMatch(effect, viewer.sex));
   return (
     <li className={`effect${muted ? ' is-muted' : ''}${emphasized ? ' is-age' : ''}`}>
-      {(effect.boxed || effect.ages) && (
+      {(effect.boxed || effect.ages || effect.sexes) && (
         <div className="tags">
           {effect.boxed && <span className="tag tag-boxed">Boxed warning</span>}
           {effect.ages?.map((a) => (
             <span key={a} className="tag">
               {AGE_LABEL[a]}
+            </span>
+          ))}
+          {effect.sexes?.map((x) => (
+            <span key={x} className="tag">
+              {SEX_LABEL[x]}
             </span>
           ))}
         </div>
@@ -83,9 +99,9 @@ function SourceFooter({ drug }: { drug: Drug }) {
   );
 }
 
-function RegionChips({ drug, age, onSelectRegion }: { drug: Drug; age: number; onSelectRegion: (r: Region) => void }) {
-  const states = regionStates(drug, age);
-  if (!states.size) return <p className="empty">No body regions are mapped from this label at this age.</p>;
+function RegionChips({ drug, viewer, onSelectRegion }: { drug: Drug; viewer: Viewer; onSelectRegion: (r: Region) => void }) {
+  const states = regionStates(drug, viewer);
+  if (!states.size) return <p className="empty">No body regions are mapped from this label for this age and sex.</p>;
   return (
     <ul className="chips">
       {[...states.entries()].map(([region, s]) => (
@@ -102,9 +118,43 @@ function RegionChips({ drug, age, onSelectRegion }: { drug: Drug; age: number; o
   );
 }
 
-export function Details({ drug, region, age, others, onSelectRegion, onSelectDrug, onClose }: DetailsProps) {
+function Note({ title, note }: { title: string; note: { text: string; section: string; sectionNumber?: string } }) {
+  return (
+    <div className="age-note">
+      <span className="eyebrow">
+        {title}
+        {note.sectionNumber ? ` · ${note.sectionNumber}` : ''}
+      </span>
+      <p>{note.text}</p>
+    </div>
+  );
+}
+
+/** Pregnancy, lactation, reproductive-potential and male/female pharmacokinetic text for the selected body. */
+function SexNotes({ notes, sex, open }: { notes: SexNote[]; sex: Viewer['sex']; open: boolean }) {
+  if (!notes.length) return null;
+  const list = notes.map((n) => <Note key={n.topic} title={n.section === n.topic ? n.topic : `${n.topic} · ${n.section}`} note={n} />);
+  if (open)
+    return (
+      <div className="sex-notes">
+        <h3 className="eyebrow">{SEX_LABEL[sex]} label notes</h3>
+        {list}
+      </div>
+    );
+  return (
+    <details className="other-ages sex-notes">
+      <summary>
+        {notes.length} {SEX_LABEL[sex]} label note{notes.length > 1 ? 's' : ''}
+      </summary>
+      {list}
+    </details>
+  );
+}
+
+export function Details({ drug, region, viewer, others, onSelectRegion, onSelectDrug, onClose }: DetailsProps) {
   if (!drug && !region) return null;
-  const group = ageGroup(age);
+  const group = ageGroup(viewer.age);
+  const sexNotes = drug ? sexNotesFor(drug, viewer.sex) : [];
   const ageNote = drug && group !== 'adult' ? drug.ageNotes?.[group] : undefined;
 
   return (
@@ -121,25 +171,19 @@ export function Details({ drug, region, age, others, onSelectRegion, onSelectDru
         </button>
       </header>
 
-      {ageNote && (
-        <div className="age-note">
-          <span className="eyebrow">
-            {ageNote.section}
-            {ageNote.sectionNumber ? ` · ${ageNote.sectionNumber}` : ''}
-          </span>
-          <p>{ageNote.text}</p>
-        </div>
-      )}
+      {ageNote && <Note title={ageNote.section} note={ageNote} />}
 
-      {drug && region && <DrugRegion drug={drug} region={region} age={age} onSelectRegion={onSelectRegion} />}
+      {drug && region && <DrugRegion drug={drug} region={region} viewer={viewer} onSelectRegion={onSelectRegion} />}
 
       {drug && !region && (
         <>
           {drug.brands.length > 0 && <p className="brands">{drug.brands.join(' · ')}</p>}
           <h3 className="eyebrow">Mapped regions</h3>
-          <RegionChips drug={drug} age={age} onSelectRegion={onSelectRegion} />
+          <RegionChips drug={drug} viewer={viewer} onSelectRegion={onSelectRegion} />
         </>
       )}
+
+      {drug && <SexNotes notes={sexNotes} sex={viewer.sex} open={!region || region === 'reproductive'} />}
 
       {!drug && region && (
         <p className="empty">{others.length ? 'Select a drug to read its label information here.' : 'Add a drug to see label information for this region.'}</p>
@@ -165,8 +209,8 @@ export function Details({ drug, region, age, others, onSelectRegion, onSelectDru
   );
 }
 
-function DrugRegion({ drug, region, age, onSelectRegion }: { drug: Drug; region: Region; age: number; onSelectRegion: (r: Region) => void }) {
-  const details = regionDetails(drug, region, age);
+function DrugRegion({ drug, region, viewer, onSelectRegion }: { drug: Drug; region: Region; viewer: Viewer; onSelectRegion: (r: Region) => void }) {
+  const details = regionDetails(drug, region, viewer);
   const order: EffectType[] = ['therapeutic', 'adverse', 'warning', 'contraindication'];
   const present = order.filter((t) => details[t].length);
 
@@ -175,11 +219,11 @@ function DrugRegion({ drug, region, age, onSelectRegion }: { drug: Drug; region:
       <div className="no-effect">
         <p className="empty">
           No effect is mapped to the {REGION_INFO[region].label.toLowerCase()} in the {drug.label.labelTitle || drug.name} label
-          {details.otherAges.length ? ` for ${AGE_LABEL[ageGroup(age)].toLowerCase()} patients` : ''}.
+          {details.other.length ? ` for ${SEX_LABEL[viewer.sex]}, ${AGE_LABEL[ageGroup(viewer.age)].toLowerCase()} patients` : ''}.
         </p>
-        {details.otherAges.length > 0 && <OtherAges effects={details.otherAges} age={age} />}
+        {details.other.length > 0 && <Other effects={details.other} viewer={viewer} />}
         <h3 className="eyebrow">Mapped regions</h3>
-        <RegionChips drug={drug} age={age} onSelectRegion={onSelectRegion} />
+        <RegionChips drug={drug} viewer={viewer} onSelectRegion={onSelectRegion} />
       </div>
     );
   }
@@ -187,16 +231,16 @@ function DrugRegion({ drug, region, age, onSelectRegion }: { drug: Drug; region:
   return (
     <div className="sections">
       {present.map((type) => (
-        <EffectGroup key={`${drug.id}-${region}-${type}`} type={type} effects={details[type]} age={age} />
+        <EffectGroup key={`${drug.id}-${region}-${type}`} type={type} effects={details[type]} viewer={viewer} />
       ))}
-      {details.otherAges.length > 0 && <OtherAges effects={details.otherAges} age={age} />}
+      {details.other.length > 0 && <Other effects={details.other} viewer={viewer} />}
     </div>
   );
 }
 
 const VISIBLE = 2;
 
-function EffectGroup({ type, effects, age }: { type: EffectType; effects: Effect[]; age: number }) {
+function EffectGroup({ type, effects, viewer }: { type: EffectType; effects: Effect[]; viewer: Viewer }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? effects : effects.slice(0, VISIBLE);
   const hidden = effects.length - shown.length;
@@ -208,7 +252,7 @@ function EffectGroup({ type, effects, age }: { type: EffectType; effects: Effect
       </h3>
       <ul>
         {shown.map((e, i) => (
-          <EffectItem key={i} effect={e} age={age} />
+          <EffectItem key={i} effect={e} viewer={viewer} />
         ))}
       </ul>
       {hidden > 0 && (
@@ -220,15 +264,15 @@ function EffectGroup({ type, effects, age }: { type: EffectType; effects: Effect
   );
 }
 
-function OtherAges({ effects, age }: { effects: Effect[]; age: number }) {
+function Other({ effects, viewer }: { effects: Effect[]; viewer: Viewer }) {
   return (
     <details className="other-ages">
       <summary>
-        {effects.length} statement{effects.length > 1 ? 's' : ''} for other age groups
+        {effects.length} statement{effects.length > 1 ? 's' : ''} for another age group or sex
       </summary>
       <ul>
         {effects.map((e, i) => (
-          <EffectItem key={i} effect={e} age={age} muted />
+          <EffectItem key={i} effect={e} viewer={viewer} muted />
         ))}
       </ul>
     </details>

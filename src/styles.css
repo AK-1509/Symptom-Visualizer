@@ -336,6 +336,39 @@ input[type='range']::-moz-range-thumb {
   color: var(--faint);
 }
 
+.results {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+
+.results-group {
+  padding: 10px 9px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.result-snippet {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.result-snippet mark {
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .results-empty {
   padding: 9px;
   color: var(--muted);

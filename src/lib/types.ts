@@ -57,6 +57,8 @@ interface EffectFields {
   sectionTitle?: string;
   /** Present only when the source sentences name an age group. Absent = applies to all ages. */
   ages?: AgeGroup[];
+  /** Present only when the source sentences name one sex ("in women", "males", pregnancy, prostate). Absent = applies to both. */
+  sexes?: Sex[];
   boxed?: boolean;
 }
 
@@ -74,10 +76,21 @@ export interface StoredEffect extends EffectFields {
 /** Runtime effect record: an effect with its excerpt text and its full provenance. */
 export interface Effect extends ExtractedEffect, LabelSource {}
 
-export interface AgeNote {
+/** A short verbatim passage from a label section that is shown as context rather than mapped to a region. */
+export interface LabelNote {
   text: string;
   section: string;
   sectionNumber?: string;
+}
+
+export type AgeNote = LabelNote;
+
+/** Label text about one or both sexes: pregnancy, lactation, reproductive potential, male/female pharmacokinetics. */
+export interface SexNote extends LabelNote {
+  /** Short heading, e.g. "Pregnancy" or "Male and female differences". */
+  topic: string;
+  /** Absent = relevant to both. */
+  sexes?: Sex[];
 }
 
 export interface StoredDrug {
@@ -93,6 +106,7 @@ export interface StoredDrug {
   quotes: string[];
   effects: StoredEffect[];
   ageNotes?: Partial<Record<'pediatric' | 'geriatric', AgeNote>>;
+  sexNotes?: SexNote[];
 }
 
 export interface Drug extends Omit<StoredDrug, 'effects' | 'quotes'> {

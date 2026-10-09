@@ -3,8 +3,8 @@ import { ActiveDrugs } from './components/ActiveDrugs.tsx';
 import { Body } from './components/Body.tsx';
 import { Details } from './components/Details.tsx';
 import { Search } from './components/Search.tsx';
-import { AGE_LABEL, addActive, ageGroup, isAgeSpecificMatch, regionOverlap, regionStates, removeActive } from './lib/effects.ts';
-import { buildIndex } from './lib/search.ts';
+import { AGE_LABEL, SEX_LABEL, addActive, ageGroup, regionOverlap, regionStates, removeActive, specificCounts } from './lib/effects.ts';
+import { buildIndex, warmTextIndex } from './lib/search.ts';
 import type { Region, Sex } from './lib/types.ts';
 import { loadDrugs, type LoadState } from './data.ts';
 
@@ -37,17 +37,24 @@ export function App() {
   const drugs = data.status === 'ready' ? data.drugs : null;
   const byId = useMemo(() => new Map((drugs ?? []).map((d) => [d.id, d])), [drugs]);
   const index = useMemo(() => (drugs ? buildIndex(drugs) : null), [drugs]);
+  // Build the full-text index while the browser is idle so the first label-text query is instant.
+  useEffect(() => {
+    if (!index) return;
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 200));
+    idle(() => warmTextIndex(index));
+  }, [index]);
   const active = useMemo(() => activeIds.map((id) => byId.get(id)).filter((d) => !!d), [activeIds, byId]);
   const selected = selectedId ? (byId.get(selectedId) ?? null) : null;
 
-  const states = useMemo(() => regionStates(selected ?? undefined, age), [selected, age]);
-  const overlapDrugs = useMemo(() => regionOverlap(active, age), [active, age]);
+  const viewer = useMemo(() => ({ age, sex }), [age, sex]);
+  const states = useMemo(() => regionStates(selected ?? undefined, viewer), [selected, viewer]);
+  const overlapDrugs = useMemo(() => regionOverlap(active, viewer), [active, viewer]);
   const overlap = useMemo(() => new Map([...overlapDrugs].map(([r, list]) => [r, list.length])), [overlapDrugs]);
   const others = region ? (overlapDrugs.get(region) ?? []).filter((d) => d.id !== selectedId) : [];
   const group = ageGroup(age);
-  const ageSpecific = selected ? selected.effects.filter((e) => isAgeSpecificMatch(e, age)).length : 0;
+  const specific = useMemo(() => specificCounts(selected, viewer), [selected, viewer]);
 
-  const add = useCallback((id: string) => {
+  const add = useCallback((id: string, openRegion?: Region) => {
     setActiveIds((ids) => addActive(ids, id));
     setColors((c) => {
       if (c.has(id)) return c;
@@ -57,6 +64,7 @@ export function App() {
       return next;
     });
     setSelectedId(id);
+    if (openRegion) setRegion(openRegion);
   }, []);
 
   const remove = useCallback(
@@ -147,7 +155,13 @@ export function App() {
             <input type="range" min={0} max={100} value={age} onChange={(e) => setAge(Number(e.target.value))} aria-valuetext={`Age ${age}, ${AGE_LABEL[group]}`} />
             <span className="age-group">
               {AGE_LABEL[group]}
-              {ageSpecific > 0 && <em> · {ageSpecific} age-specific</em>}
+              {specific.age > 0 && <em> · {specific.age} age-specific</em>}
+              {specific.sex > 0 && (
+                <em>
+                  {' '}
+                  · {specific.sex} {SEX_LABEL[sex]}-specific
+                </em>
+              )}
             </span>
           </label>
         </div>
@@ -163,7 +177,7 @@ export function App() {
           </div>
         )}
         <ActiveDrugs drugs={active} selectedId={selectedId} colors={colors} onSelect={setSelectedId} onRemove={remove} onDragStart={startDrag} />
-        {selected && states.size === 0 && <p className="hint">No body regions are mapped for {selected.name} at age {age}.</p>}
+        {selected && states.size === 0 && <p className="hint">No body regions are mapped for {selected.name} for {SEX_LABEL[sex]} at age {age}.</p>}
       </div>
 
       <main className="stage">
@@ -175,7 +189,7 @@ export function App() {
         <Details
           drug={selected}
           region={region}
-          age={age}
+          viewer={viewer}
           others={others}
           onSelectRegion={setRegion}
           onSelectDrug={setSelectedId}
