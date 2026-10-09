@@ -1,10 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 
+/** The selectable card for an active drug. */
+const card = (page: Page, name: string, pressed?: boolean) =>
+  page.getByRole('region', { name: 'Active drugs' }).getByRole('button', { name: new RegExp(`^${name}`, 'i'), pressed });
+
 async function addDrug(page: Page, query: string, name: string) {
   const search = page.getByRole('combobox');
   await search.fill(query);
   await page.getByRole('option', { name: new RegExp(name, 'i') }).first().click();
-  await expect(page.getByRole('button', { name: new RegExp(`^${name}`, 'i'), pressed: true })).toBeVisible();
+  await expect(card(page, name, true)).toBeVisible();
 }
 
 async function dragPillTo(page: Page, drugName: string, regionSelector: string) {
@@ -58,19 +62,19 @@ test('core journey: search, highlight, click, drag, switch, remove', async ({ pa
   // Add a second drug via brand name and switch between them.
   await addDrug(page, 'lipit', 'Atorvastatin');
   await expect(page.locator('#musculoskeletal')).toHaveClass(/is-affected/);
-  await page.getByRole('button', { name: /^Semaglutide/ }).click();
-  await expect(page.getByRole('button', { name: /^Semaglutide/, pressed: true })).toBeVisible();
+  await card(page, 'Semaglutide').click();
+  await expect(card(page, 'Semaglutide', true)).toBeVisible();
   await expect(details.getByText('Semaglutide', { exact: true })).toBeVisible();
 
   // Adding an active drug again does not duplicate it.
   await page.getByRole('combobox').fill('ozempic');
   await page.getByRole('option', { name: /Semaglutide/ }).click();
-  await expect(page.getByRole('button', { name: /^Semaglutide/ })).toHaveCount(1);
+  await expect(card(page, 'Semaglutide')).toHaveCount(1);
 
   // Remove a drug.
   await page.getByRole('button', { name: 'Remove Semaglutide' }).click();
-  await expect(page.getByRole('button', { name: /^Semaglutide/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /^Atorvastatin/, pressed: true })).toBeVisible();
+  await expect(card(page, 'Semaglutide')).toHaveCount(0);
+  await expect(card(page, 'Atorvastatin', true)).toBeVisible();
 });
 
 test('keyboard only: search, select and open a region', async ({ page }) => {
@@ -78,7 +82,7 @@ test('keyboard only: search, select and open a region', async ({ page }) => {
   await page.getByRole('combobox').focus();
   await page.keyboard.type('metf');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: /^Metformin/, pressed: true })).toBeVisible();
+  await expect(card(page, 'Metformin', true)).toBeVisible();
   await page.locator('#blood').focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary', { name: 'Details' }).getByRole('heading', { name: 'Blood & vessels' })).toBeVisible();

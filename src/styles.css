@@ -603,7 +603,7 @@ input[type='range']::-moz-range-thumb {
 
 .region.is-therapeutic .line {
   stroke: var(--therapeutic);
-  stroke-width: 2.4;
+  stroke-width: 2;
 }
 
 /* Adverse: hatching (lines: dotted) */
@@ -621,7 +621,7 @@ input[type='range']::-moz-range-thumb {
 
 .region.is-adverse:not(.is-therapeutic) .line {
   stroke: var(--adverse);
-  stroke-width: 2.4;
+  stroke-width: 2.2;
   stroke-dasharray: 0.1 4.5;
 }
 
@@ -633,12 +633,12 @@ input[type='range']::-moz-range-thumb {
 }
 
 .region.is-warning:not(.is-therapeutic):not(.is-adverse) .fill {
-  fill: color-mix(in srgb, var(--warning) 16%, #0b0e12);
+  fill: color-mix(in srgb, var(--warning) 30%, #0b0e12);
 }
 
 .region.is-warning:not(.is-therapeutic):not(.is-adverse) .line {
   stroke: var(--warning);
-  stroke-width: 2.4;
+  stroke-width: 1.8;
   stroke-dasharray: 7 4;
 }
 
@@ -652,12 +652,12 @@ input[type='range']::-moz-range-thumb {
 }
 
 .r-skin.is-adverse .hatch {
-  opacity: 0.22;
+  opacity: 0.1;
 }
 
 .r-skin.is-warning .skin-outline {
   stroke: var(--warning);
-  stroke-width: 2;
+  stroke-width: 1.4;
   stroke-dasharray: 6 4;
 }
 
@@ -1042,6 +1042,23 @@ blockquote {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.more {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.more:hover {
+  color: var(--text);
 }
 
 .other-ages summary {

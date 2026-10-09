@@ -39,9 +39,12 @@ export interface TermEntry {
   regions: Region[];
   pattern: RegExp;
   generic?: boolean;
+  indicationOnly?: boolean;
+  notTherapeutic?: boolean;
 }
 
-type Row = [term: string, regions: Region | Region[], patterns: string, generic?: 'g'];
+/** Flags: g = generic anatomical word, i = indication wording (therapeutic sections only), n = never therapeutic. */
+type Row = [term: string, regions: Region | Region[], patterns: string, flags?: 'g' | 'i' | 'n'];
 
 /**
  * Deterministic keyword/synonym table. Patterns are case-insensitive, word-bounded
@@ -55,7 +58,7 @@ const ROWS: Row[] = [
   ['Migraine', 'brain', 'migraines?'],
   ['Headache', 'brain', 'headaches?'],
   ['Dizziness', 'brain', 'dizziness|vertigo|lightheadedness'],
-  ['Somnolence', 'brain', 'somnolence|drowsiness|sedation|sleepiness'],
+  ['Somnolence', 'brain', 'somnolence|drowsiness|sleepiness|sedated'],
   ['Insomnia', 'brain', 'insomnia|sleep disorders?|abnormal dreams'],
   ['Suicidal thoughts and behaviors', 'brain', 'suicid*'],
   ['Depression', 'brain', 'depression|depressed mood'],
@@ -69,14 +72,14 @@ const ROWS: Row[] = [
   ['Neuroleptic malignant syndrome', ['brain', 'whole_body'], 'neuroleptic malignant syndrome'],
   ['Tardive dyskinesia', 'brain', 'tardive dyskinesia|extrapyramidal|akathisia|dystonia'],
   ['CNS depression', 'brain', 'cns depression|central nervous system depression|respiratory and cns depression'],
-  ['Schizophrenia', 'brain', 'schizophrenia'],
-  ['Bipolar disorder', 'brain', 'bipolar'],
-  ['Major depressive disorder', 'brain', 'major depressive disorder|mdd'],
-  ['Anxiety disorders', 'brain', 'generalized anxiety disorder|panic disorder|social anxiety disorder|obsessive.compulsive disorder|post.?traumatic stress disorder'],
-  ['ADHD', 'brain', 'attention deficit hyperactivity disorder|adhd'],
-  ['Alzheimer’s disease', 'brain', 'alzheimer*'],
+  ['Schizophrenia', 'brain', 'schizophrenia', 'i'],
+  ['Bipolar disorder', 'brain', 'bipolar', 'i'],
+  ['Major depressive disorder', 'brain', 'major depressive disorder|mdd', 'i'],
+  ['Anxiety disorders', 'brain', 'generalized anxiety disorder|panic disorder|social anxiety disorder|obsessive.compulsive disorder|post.?traumatic stress disorder', 'i'],
+  ['ADHD', 'brain', 'attention deficit hyperactivity disorder|adhd', 'i'],
+  ['Alzheimer’s disease', 'brain', 'alzheimer*', 'i'],
   ['Abuse, dependence and withdrawal', 'brain', 'addiction|abuse|misuse|dependence|withdrawal|discontinuation syndrome'],
-  ['Pain', 'nervous_system', 'pain severe enough|management of pain|relief of pain|acute pain|chronic pain|mild to moderate pain'],
+  ['Pain', 'nervous_system', 'pain severe enough|management of pain|relief of pain|acute pain|chronic pain|mild to moderate pain', 'i'],
   ['Brain', 'brain', 'brain|cerebral|intracranial|central nervous system|cns', 'g'],
 
   // Peripheral nervous system
@@ -101,7 +104,7 @@ const ROWS: Row[] = [
   ['Pharyngitis', 'mouth_throat', 'pharyngitis|sore throat|throat irritation|pharyngolaryngeal pain|oropharyngeal pain'],
   ['Rhinitis & sinusitis', 'mouth_throat', 'sinusitis|rhinitis|nasal congestion|rhinorrhea|epistaxis'],
   ['Stomatitis', 'mouth_throat', 'stomatitis|mouth ulcers?|mucositis|oral candidiasis|thrush'],
-  ['Angioedema', ['mouth_throat', 'skin'], 'angioedema'],
+  ['Angioedema', 'mouth_throat', 'angioedema'],
   ['Tonsillitis', 'mouth_throat', 'tonsillitis'],
   ['Mouth & throat', 'mouth_throat', 'mouth|oral cavity|throat|tongue|lips|larynx|laryngeal|nasal|nose', 'g'],
 
@@ -120,6 +123,7 @@ const ROWS: Row[] = [
   ['Asthma', 'lungs', 'asthma|bronchospasm|wheezing'],
   ['COPD', 'lungs', 'chronic obstructive pulmonary disease|copd|emphysema|chronic bronchitis'],
   ['Respiratory depression', 'lungs', 'respiratory depression'],
+  ['Pulmonary aspiration', 'lungs', 'pulmonary aspiration|aspiration pneumonia'],
   ['Cough', 'lungs', 'cough'],
   ['Dyspnea', 'lungs', 'dyspnea|shortness of breath|breathing difficulties|difficulty breathing'],
   ['Respiratory tract infection', 'lungs', 'upper respiratory tract infections?|respiratory tract infections?|lower respiratory tract infections?|bronchitis'],
@@ -168,9 +172,9 @@ const ROWS: Row[] = [
 
   // Pancreas & glucose control
   ['Pancreatitis', 'pancreas', 'pancreatitis'],
-  ['Type 2 diabetes mellitus', 'pancreas', 'type 2 diabetes mellitus|type 2 diabetes'],
-  ['Diabetes mellitus', 'pancreas', 'diabetes mellitus|diabetic patients'],
-  ['Glycemic control', 'pancreas', 'glycemic control|blood glucose control'],
+  ['Type 2 diabetes mellitus', 'pancreas', 'type 2 diabetes mellitus|type 2 diabetes', 'i'],
+  ['Diabetes mellitus', 'pancreas', 'diabetes mellitus|diabetic patients', 'i'],
+  ['Glycemic control', 'pancreas', 'glycemic control|blood glucose control', 'i'],
   ['Pancreas', 'pancreas', 'pancrea*', 'g'],
 
   // Kidneys
@@ -184,7 +188,7 @@ const ROWS: Row[] = [
   ['Urinary tract infection', 'bladder', 'urinary tract infections?|uti|cystitis'],
   ['Urinary retention', 'bladder', 'urinary retention|difficulty urinating|urinary hesitation'],
   ['Overactive bladder', 'bladder', 'overactive bladder|urinary incontinence|urge urinary incontinence|urgency|pollakiuria|urinary frequency|nocturia'],
-  ['Benign prostatic hyperplasia', ['bladder', 'reproductive'], 'benign prostatic hyperplasia|bph'],
+  ['Benign prostatic hyperplasia', ['bladder', 'reproductive'], 'benign prostatic hyperplasia|bph', 'i'],
   ['Bladder', 'bladder', 'bladder|urinary|urination|urethr*', 'g'],
 
   // Reproductive
@@ -213,14 +217,14 @@ const ROWS: Row[] = [
   ['Blood & vessels', 'blood', 'blood|vascular|vessels?|arter*|venous|veins?|hemato*|plasma', 'g'],
 
   // Immune & infection
-  ['Hypersensitivity reactions', ['immune', 'whole_body'], 'hypersensitivity|allergic reactions?|allergy|allergies'],
-  ['Anaphylaxis', ['immune', 'whole_body'], 'anaphyla*'],
+  ['Hypersensitivity reactions', 'immune', 'hypersensitivity|allergic reactions?|allergy|allergies'],
+  ['Anaphylaxis', 'immune', 'anaphyla*'],
   ['Serious infections', 'immune', 'serious infections?|opportunistic infections?|sepsis|tuberculosis|fungal infections?'],
   ['Bacterial infections', 'immune', 'infections caused by|bacterial infections?|susceptible (strains|isolates|bacteria)|community.acquired|otitis media|streptococcus|staphylococcus|h\\. pylori|helicobacter pylori'],
   ['Viral infections', 'immune', 'herpes zoster|herpes labialis|genital herpes|influenza|covid|hepatitis b|herpes'],
   ['Immunosuppression', 'immune', 'immunosuppress*|immune suppression|lymphoma|malignancies'],
   ['Lupus-like reactions', 'immune', 'lupus|autoimmune'],
-  ['Rheumatoid arthritis', ['immune', 'musculoskeletal'], 'rheumatoid arthritis|psoriatic arthritis|ankylosing spondylitis|juvenile idiopathic arthritis'],
+  ['Rheumatoid arthritis', ['immune', 'musculoskeletal'], 'rheumatoid arthritis|psoriatic arthritis|ankylosing spondylitis|juvenile idiopathic arthritis', 'i'],
   ['Immune & lymph', 'immune', 'immune|lymph*|spleen|splen*', 'g'],
 
   // Skin
@@ -238,14 +242,14 @@ const ROWS: Row[] = [
   ['Skin', 'skin', 'skin|dermat*|cutaneous|subcutaneous', 'g'],
 
   // Muscles, bones & joints
-  ['Myopathy', 'musculoskeletal', 'myopathy|rhabdomyolysis|myositis|muscle injury|necrotizing'],
+  ['Myopathy', 'musculoskeletal', 'myopathy|rhabdomyolysis|myositis|muscle injury'],
   ['Muscle pain', 'musculoskeletal', 'myalgia|muscle pain|muscle spasms?|muscle cramps?|muscle weakness'],
   ['Joint pain', 'musculoskeletal', 'arthralgia|joint pain|arthritis|joint swelling'],
   ['Back pain', 'musculoskeletal', 'back pain'],
   ['Tendon rupture', 'musculoskeletal', 'tendinitis|tendon rupture|tendon'],
   ['Fractures', 'musculoskeletal', 'fractures?|osteoporosis|bone mineral density|bone loss|osteonecrosis'],
   ['Pain in extremity', 'musculoskeletal', 'pain in extremity|limb pain'],
-  ['Osteoarthritis', 'musculoskeletal', 'osteoarthritis'],
+  ['Osteoarthritis', 'musculoskeletal', 'osteoarthritis', 'i'],
   ['Gout', 'musculoskeletal', 'gout|gouty'],
   ['Muscles & bones', 'musculoskeletal', 'musculoskeletal|muscles?|skeletal|bones?|joints?', 'g'],
 
@@ -257,11 +261,12 @@ const ROWS: Row[] = [
 
   // Whole body
   ['Fatigue', 'whole_body', 'fatigue|asthenia|tiredness|malaise|lethargy'],
-  ['Weight changes', 'whole_body', 'weight gain|weight loss|weight increased|weight decreased|weight reduction|body weight|obesity|overweight|chronic weight management'],
+  ['Weight management', 'whole_body', 'chronic weight management|weight reduction|reduce excess body weight|obesity|overweight', 'i'],
+  ['Weight changes', 'whole_body', 'weight gain|weight loss|weight increased|weight decreased|increased weight|decreased weight'],
   ['Edema', 'whole_body', 'edema|oedema|swelling|fluid retention'],
   ['Fever', 'whole_body', 'fever|pyrexia|chills'],
-  ['Overdose', 'whole_body', 'overdose|overdosage'],
-  ['Death', 'whole_body', 'deaths?|mortality'],
+  ['Overdose', 'whole_body', 'overdose|overdosage', 'n'],
+  ['Death', 'whole_body', 'deaths?|mortality', 'n'],
 ];
 
 function compile(source: string): RegExp {
@@ -269,14 +274,16 @@ function compile(source: string): RegExp {
     .split('|')
     .map((alt) => alt.trim().replace(/\*/g, '\\w*'))
     .join('|');
-  return new RegExp(`\\b(?:${body})(?![\\w-])`, 'i');
+  return new RegExp(`\\b(?:${body})(?![\\w-])`, 'gi');
 }
 
-export const TERMS: TermEntry[] = ROWS.map(([term, regions, patterns, generic]) => ({
+export const TERMS: TermEntry[] = ROWS.map(([term, regions, patterns, flag]) => ({
   term,
   regions: Array.isArray(regions) ? regions : [regions],
   pattern: compile(patterns),
-  generic: generic === 'g',
+  generic: flag === 'g',
+  indicationOnly: flag === 'i',
+  notTherapeutic: flag === 'n',
 }));
 
 export interface TermMatch {
@@ -287,25 +294,37 @@ export interface TermMatch {
 
 /**
  * Find every mapped term in a piece of label text.
- * A generic anatomical word only counts for a region no specific term already covers,
- * so "hepatic failure" yields "Liver failure" and not also a bare "Liver" hit.
+ * - A mention nested inside an already-matched term counts once ("diabetes mellitus" in "type 2 diabetes mellitus").
+ * - A generic anatomical word only counts for a region no specific term already covers,
+ *   so "hepatic failure" yields "Liver failure" and not also a bare "Liver" hit.
+ * - Indication wording ("type 2 diabetes") describes the treated population outside therapeutic sections, so it
+ *   only counts in them; outcome words like "death" never count as a therapeutic effect.
+ * - In Adverse Reactions, a condition that describes who was studied ("in patients with heart failure") is skipped.
  */
-export function matchTerms(text: string): TermMatch[] {
+/** "in patients with chronic kidney disease": the studied population, not an effect, when it appears in Adverse Reactions. */
+const POPULATION_PREFIX = /\b(?:patients|subjects|adults|children|participants|those)\s+(?:with|who (?:have|had))(?:\s+(?!(?:who|developed|experienced|reported|treated|receiving|taking)\b)[\w-]+){0,7}\s*$/i;
+
+export function matchTerms(text: string, { therapeutic = false, adverse = false } = {}): TermMatch[] {
   const out: TermMatch[] = [];
   const covered = new Set<Region>();
   const spans: [number, number][] = [];
   for (const entry of TERMS) {
-    const m = entry.pattern.exec(text);
-    if (!m) continue;
-    const span: [number, number] = [m.index, m.index + m[0].length];
-    // "diabetes mellitus" inside an already-matched "type 2 diabetes mellitus" is the same mention.
-    if (spans.some(([a, b]) => span[0] >= a && span[1] <= b)) continue;
+    if (entry.indicationOnly && !therapeutic) continue;
+    if (entry.notTherapeutic && therapeutic) continue;
+    const found: [number, number][] = [];
+    for (const m of text.matchAll(entry.pattern)) {
+      const span: [number, number] = [m.index, m.index + m[0].length];
+      if (spans.some(([a, b]) => span[0] >= a && span[1] <= b)) continue;
+      if (adverse && POPULATION_PREFIX.test(text.slice(Math.max(0, m.index - 80), m.index))) continue;
+      found.push(span);
+    }
+    if (!found.length) continue;
     if (entry.generic) {
       const regions = entry.regions.filter((r) => !covered.has(r));
       if (regions.length) out.push({ term: entry.term, regions, generic: true });
     } else {
       entry.regions.forEach((r) => covered.add(r));
-      spans.push(span);
+      spans.push(...found);
       out.push({ term: entry.term, regions: entry.regions, generic: false });
     }
   }
@@ -313,8 +332,8 @@ export function matchTerms(text: string): TermMatch[] {
 }
 
 /** Regions mentioned by a piece of text. */
-export function mapToRegions(text: string): Region[] {
+export function mapToRegions(text: string, options?: { therapeutic?: boolean }): Region[] {
   const set = new Set<Region>();
-  for (const m of matchTerms(text)) m.regions.forEach((r) => set.add(r));
+  for (const m of matchTerms(text, options)) m.regions.forEach((r) => set.add(r));
   return [...set];
 }

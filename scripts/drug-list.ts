@@ -42,7 +42,7 @@ export const DRUGS: DrugConfig[] = [
   { id: 'rivaroxaban', name: 'Rivaroxaban', brand: 'Xarelto' },
   { id: 'clopidogrel', name: 'Clopidogrel', brand: 'Plavix' },
   { id: 'digoxin', name: 'Digoxin', brand: 'Lanoxin' },
-  { id: 'aspirin', name: 'Aspirin', otc: true, brand: 'Bayer' },
+  { id: 'aspirin', name: 'Aspirin', otc: true, brand: 'Bayer Aspirin', otcBrands: ['Ecotrin'] },
 
   // Brain & mental health
   { id: 'sertraline', name: 'Sertraline', brand: 'Zoloft' },
@@ -71,13 +71,13 @@ export const DRUGS: DrugConfig[] = [
   { id: 'sumatriptan', name: 'Sumatriptan', brand: 'Imitrex' },
 
   // Digestive
-  { id: 'omeprazole', name: 'Omeprazole', brand: 'Prilosec' },
+  { id: 'omeprazole', name: 'Omeprazole', brand: 'Prilosec', otcBrands: ['Prilosec OTC'] },
   { id: 'pantoprazole', name: 'Pantoprazole', brand: 'Protonix' },
-  { id: 'famotidine', name: 'Famotidine', brand: 'Pepcid' },
+  { id: 'famotidine', name: 'Famotidine', brand: 'Pepcid', otcBrands: ['Pepcid AC'] },
   { id: 'ondansetron', name: 'Ondansetron', brand: 'Zofran' },
 
   // Respiratory & allergy
-  { id: 'albuterol', name: 'Albuterol', brand: 'ProAir HFA', aliases: ['Salbutamol'] },
+  { id: 'albuterol', name: 'Albuterol', brand: 'Ventolin HFA', aliases: ['Salbutamol'] },
   { id: 'fluticasone-salmeterol', name: 'Fluticasone / salmeterol', generic: 'fluticasone and salmeterol', brand: 'Advair Diskus' },
   { id: 'budesonide-formoterol', name: 'Budesonide / formoterol', generic: 'budesonide and formoterol', brand: 'Symbicort' },
   { id: 'tiotropium', name: 'Tiotropium', brand: 'Spiriva' },
@@ -98,9 +98,9 @@ export const DRUGS: DrugConfig[] = [
   { id: 'fluconazole', name: 'Fluconazole', brand: 'Diflucan' },
 
   // Pain & inflammation
-  { id: 'ibuprofen', name: 'Ibuprofen' },
-  { id: 'naproxen', name: 'Naproxen', brand: 'Naprosyn' },
-  { id: 'acetaminophen', name: 'Acetaminophen', brand: 'Ofirmev', aliases: ['Paracetamol'] },
+  { id: 'ibuprofen', name: 'Ibuprofen', otcBrands: ['Advil', 'Motrin'] },
+  { id: 'naproxen', name: 'Naproxen', brand: 'Naprosyn', otcBrands: ['Aleve'] },
+  { id: 'acetaminophen', name: 'Acetaminophen', brand: 'Ofirmev', otcBrands: ['Tylenol'], aliases: ['Paracetamol'] },
   { id: 'celecoxib', name: 'Celecoxib', brand: 'Celebrex' },
   { id: 'meloxicam', name: 'Meloxicam', brand: 'Mobic' },
   { id: 'tramadol', name: 'Tramadol', brand: 'Ultram' },

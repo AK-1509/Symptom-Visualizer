@@ -109,7 +109,8 @@ export const Body = memo(function Body({ sex, states, overlap, drugSelected, sel
   };
 
   const callout = dropTarget ?? hover ?? selectedRegion;
-  const badges = [...overlap.entries()].filter(([, n]) => n > 1);
+  // With a drug selected, overlap is shown only where it touches that drug's mapped regions.
+  const badges = [...overlap.entries()].filter(([region, n]) => n > 1 && (!drugSelected || states.has(region)));
 
   return (
     <svg className={`body body-${sex}`} viewBox={VIEWBOX} role="group" aria-label={`${sex === 'amab' ? 'AMAB' : 'AFAB'} body map`}>

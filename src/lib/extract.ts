@@ -2,8 +2,8 @@
  * Deterministic extraction of body-region effects from an openFDA drug label.
  * Used by the data build script (scripts/build-data.ts) and unit tests; never by the browser.
  */
-import { matchTerms } from './anatomy.ts';
-import type { AgeGroup, AgeNote, EffectType, LabelSource, Region, StoredDrug, StoredEffect } from './types.ts';
+import { matchTerms, type TermMatch } from './anatomy.ts';
+import type { AgeGroup, AgeNote, EffectType, ExtractedEffect, LabelSource, Region, StoredDrug } from './types.ts';
 
 /** The subset of an openFDA /drug/label.json result this pipeline reads. */
 export interface OpenFdaLabel {
@@ -50,8 +50,11 @@ export const SECTIONS: SectionSpec[] = [
 const SECTION_TITLES =
   /^\s*(?:\d{1,2}\s+)?(?:INDICATIONS\s*(?:AND|&)\s*USAGE|ADVERSE REACTIONS|WARNINGS\s*(?:AND|&)\s*PRECAUTIONS|CONTRAINDICATIONS|WARNINGS|PRECAUTIONS|DO NOT USE|STOP USE(?: AND ASK A DOCTOR IF)?)\b[:.]?\s*/i;
 
+/** Title given to statements from the label's Highlights summary. */
+export const HIGHLIGHTS = 'Highlights';
+
 const MAX_EXCERPT = 280;
-const MIN_EXCERPT = 35;
+const MIN_EXCERPT = 24;
 const MAX_EXCERPTS = 2;
 const MAX_TERMS = 8;
 
@@ -66,7 +69,8 @@ export function cleanText(text: string): string {
 }
 
 const CONNECTORS = new Set(['of', 'and', 'or', 'in', 'with', 'the', 'to', 'for', 'a', 'an', 'on', 'at', 'by', 'from', 'vs', 'during', '&']);
-const isCapitalized = (w: string) => /^[A-Z0-9(]/.test(w);
+const isCapitalized = (w: string) => /^[A-Z(]/.test(w);
+const isTitleCase = (text: string) => text.split(' ').every((w) => isCapitalized(w) || CONNECTORS.has(w));
 
 /**
  * Split a flattened "5.2 Pancreatitis Acute pancreatitis, including..." run into a heading
@@ -87,6 +91,8 @@ export function splitHeading(text: string): { title?: string; body: string } {
   // ("Pediatric Use | Safety and effectiveness ...").
   let start = firstLower - 1;
   while (start > 0 && CONNECTORS.has(words[start])) start--;
+  // "... Reactions | Use of OZEMPIC has": a connector before the start means the sentence began one word earlier.
+  if (start > 1 && CONNECTORS.has(words[start - 1]) && isCapitalized(words[start - 2])) start -= 2;
   if (start < 1) return { body: text };
   const title = words.slice(0, start).join(' ');
   if (/[.:;]$/.test(title) || title.length > 90) return { body: text };
@@ -99,30 +105,80 @@ interface Segment {
   text: string;
 }
 
-/** Break section text at PLR subsection headings ("5.1 ", "6.2 ") that belong to the section's major number. */
+const subsectionPattern = (major: string) => new RegExp(`(?:^|\\s)(${major}\\.\\d{1,2})\\s+(?=[A-Z])`, 'g');
+
+/**
+ * Break raw section text at PLR subsection headings ("5.1 ", "6.2 ") that belong to the section's major number.
+ * The text before the first subsection is the section intro, which in openFDA text also carries the
+ * Highlights bullets ("• Acute Pancreatitis: Has been observed... ( 5.2 )"). Each intro bullet becomes its own
+ * segment numbered by its trailing reference; bullets that only point elsewhere ("[see Warnings and
+ * Precautions (5.1)]") are dropped.
+ */
 export function segmentSection(raw: string, major?: string): Segment[] {
-  let text = cleanText(raw).replace(SECTION_TITLES, '');
-  if (!major) return [{ text }];
-  const heading = new RegExp(`(?:^|\\s)(${major}\\.\\d{1,2})\\s+(?=[A-Z])`, 'g');
+  const text = raw.replace(/\s+/g, ' ').trim().replace(SECTION_TITLES, '');
   const cuts: { index: number; number: string; length: number }[] = [];
-  for (const m of text.matchAll(heading)) cuts.push({ index: m.index!, number: m[1], length: m[0].length });
-  if (!cuts.length) return [{ text }];
+  if (major) for (const m of text.matchAll(subsectionPattern(major))) cuts.push({ index: m.index!, number: m[1], length: m[0].length });
   const out: Segment[] = [];
-  if (cuts[0].index > 0) out.push({ text: text.slice(0, cuts[0].index).trim() });
+  const intro = cuts.length ? text.slice(0, cuts[0].index) : text;
+  for (const item of intro.split(/\s*•\s*/)) {
+    // Each Highlights statement ends in a reference "( 5.2 )"; a bare cross-reference "[see ... ( 5.1 )]" ends a
+    // pointer to another section, which carries no claim of its own.
+    let last = 0;
+    const pieces: { text: string; ref?: string; xref?: boolean }[] = [];
+    for (const m of item.matchAll(/\[\s*see[^\]]*\]|\(\s*(\d{1,2}(?:\.\d{1,2})?)\s*\)/gi)) {
+      // Only a reference that closes a statement ends a piece; one inside a sentence stays put.
+      const close = item.slice(m.index! + m[0].length).match(/^\s*[.;]?\s*(?=[A-Z•]|$)/);
+      if (!close) continue;
+      const end = m.index! + m[0].length + close[0].length;
+      pieces.push({ text: item.slice(last, end), ref: m[1], xref: m[0].startsWith('[') });
+      last = end;
+    }
+    pieces.push({ text: item.slice(last) });
+    for (const piece of pieces) {
+      const number = piece.ref && major && piece.ref.startsWith(`${major}.`) ? piece.ref : undefined;
+      const cleaned = cleanText(piece.text);
+      if (piece.xref && isTitleCase(cleaned)) continue;
+      if (cleaned) out.push(number ? { number, title: HIGHLIGHTS, text: cleaned } : { text: cleaned });
+    }
+  }
   cuts.forEach((c, i) => {
-    const chunk = text.slice(c.index + c.length, i + 1 < cuts.length ? cuts[i + 1].index : undefined).trim();
+    const chunk = cleanText(text.slice(c.index + c.length, i + 1 < cuts.length ? cuts[i + 1].index : undefined));
     const { title, body } = splitHeading(chunk);
     out.push({ number: c.number, title, text: body });
   });
   return out.filter((s) => s.text);
 }
 
-/** Sentence split on terminal punctuation followed by an uppercase start, plus bullets. */
+/** "Gastrointestinal: acute pancreatitis ..." style run-in headings used in postmarketing lists and Highlights. */
+const RUN_IN = /(?:^|\s)((?:[A-Z][A-Za-z-]*)(?:\s(?:and|of|or|in|with|to|&|[A-Z][A-Za-z-]*)){0,6}):\s/g;
+
+/** Words that commonly start the first sentence after an inline sub-heading ("Cholelithiasis | In placebo-controlled trials"). */
+const STARTERS =
+  /^(In|The|A|An|Across|During|Because|There|Among|Most|Other|Patients|Overall|This|These|Adverse|When|Following|At|For|Over|Postmarketing|Treatment|Of|Compared|Data|Events|Two|One|Three|Clinical|Cases|Serious|Severe|Mean|Approximately|Discontinuation|Use|Monitor|If)$/;
+
+/** Sentence split on terminal punctuation followed by an uppercase start, bullets, and run-in headings. */
 export function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?])\s+(?=[A-Z(•“"])|\s*•\s*/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 3);
+  const out: string[] = [];
+  for (const part of text.split(/(?<=[.!?])\s+(?=[A-Z(•“"])|\s*•\s*/)) {
+    const starts = [...part.matchAll(RUN_IN)].map((m) => m.index! + (m[0].startsWith(' ') ? 1 : 0));
+    const bounds = [0, ...starts.filter((i) => i > 0), part.length];
+    for (let i = 0; i < bounds.length - 1; i++) {
+      let sentence = part.slice(bounds[i], bounds[i + 1]).trim();
+      // Drop an inline sub-heading glued to the sentence ("Injection Site Reactions In placebo-controlled trials ...").
+      const { title, body } = splitHeading(sentence);
+      if (title && STARTERS.test(body.split(' ')[0])) sentence = body;
+      if (sentence.length > 3) out.push(sentence);
+    }
+  }
+  return out;
+}
+
+/** A "Title: text" run-in heading at the start of a sentence. */
+export function runInTitle(sentence: string): string | undefined {
+  RUN_IN.lastIndex = 0;
+  const m = RUN_IN.exec(sentence);
+  RUN_IN.lastIndex = 0;
+  return m && m.index === 0 ? m[1] : undefined;
 }
 
 /** Flattened tables read as runs of numbers and percentages. */
@@ -141,6 +197,9 @@ export function detectAges(sentence: string): AgeGroup[] | undefined {
   return ages.size ? [...ages].sort() : undefined;
 }
 
+/** Trial-population descriptions in Adverse Reactions are not reactions ("At baseline, 8.9% ... reported retinopathy"). */
+const POPULATION = /\b(at baseline|mean age|baseline characteristics|were (male|female|white)|identified as|demographics?)\b/i;
+
 const EXCLUDED_THERAPEUTIC = /\b(not indicated|not recommended|has not been (studied|established)|have not been (studied|established)|not for use|limitations? of use|should not be used)\b/i;
 
 function truncate(sentence: string): string {
@@ -149,12 +208,15 @@ function truncate(sentence: string): string {
   return `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
-function excerptScore(sentence: string, type: EffectType): number {
+function excerptScore(h: Hit): number {
   let score = 0;
-  if (type === 'adverse' && /most common|most frequent|commonly/i.test(sentence)) score += 50;
-  if (/\b(fatal|serious|severe)\b/i.test(sentence)) score += 10;
-  if (sentence.length > MAX_EXCERPT) score -= 20;
-  if (sentence.length < 40) score -= 15;
+  if (h.type === 'adverse' && /most common|most frequent|commonly/i.test(h.sentence)) score += 50;
+  if (h.terms.length) score += 5;
+  if (h.direct) score += 8;
+  // The full section is the authoritative text; Highlights only summarize it.
+  if (h.title === HIGHLIGHTS) score -= 6;
+  if (h.sentence.length > MAX_EXCERPT) score -= 4;
+  if (h.sentence.length < 40) score -= 10;
   return score;
 }
 
@@ -168,41 +230,70 @@ interface Hit {
   terms: string[];
   sentence: string;
   clean: boolean;
+  /** The sentence names the region itself rather than inheriting it from its subsection title. */
+  direct: boolean;
   ages?: AgeGroup[];
   order: number;
 }
 
+/** Regions a sentence maps to, with the specific terms behind each. */
+function regionTerms(matches: TermMatch[]): Map<Region, string[]> {
+  const byRegion = new Map<Region, string[]>();
+  for (const m of matches)
+    for (const r of m.regions) {
+      const list = byRegion.get(r) ?? [];
+      if (!m.generic && !list.includes(m.term)) list.push(m.term);
+      byRegion.set(r, list);
+    }
+  return byRegion;
+}
+
 /** Extract the per-region effect records for a label. */
-export function extractEffects(label: OpenFdaLabel): StoredEffect[] {
+export function extractEffects(label: OpenFdaLabel): ExtractedEffect[] {
   const hits: Hit[] = [];
   let order = 0;
   for (const spec of SECTIONS) {
     const values = label[spec.field];
     if (!Array.isArray(values)) continue;
     if (spec.field === 'warnings' && label.warnings_and_cautions?.length) continue;
+    const therapeutic = spec.type === 'therapeutic';
+    // openFDA repeats subsections as separate array entries after the full section text.
+    const seen = new Set<string>();
     for (const raw of values) {
       let segments = segmentSection(raw, spec.major);
       let boxedTitle: string | undefined;
       if (spec.boxed) [segments, boxedTitle] = stripBoxedTitle(segments);
+      // "indicated in adults for:" applies its age group to the bullets that follow it, which arrive as separate segments.
+      let leadAges: AgeGroup[] | undefined;
       for (const seg of segments) {
         let limited = false;
+        if (seg.number) leadAges = undefined;
         for (const sentence of splitSentences(seg.text)) {
           order++;
-          if (spec.type === 'therapeutic') {
+          // A bullet run together with the next statement ("Heart failure ZOVAREX is indicated for ...") starts afresh.
+          const sentenceAges = detectAges(sentence) ?? (/\bindicated\b/i.test(sentence) ? undefined : leadAges);
+          if (/:$/.test(sentence)) leadAges = detectAges(sentence);
+          else if (/[.!?]$/.test(sentence)) leadAges = undefined;
+          if (seen.has(sentence)) continue;
+          seen.add(sentence);
+          if (therapeutic) {
             if (/limitations? of use/i.test(sentence)) limited = true;
             if (limited || EXCLUDED_THERAPEUTIC.test(sentence)) continue;
           }
-          const matches = matchTerms(sentence);
-          if (!matches.length) continue;
-          const ages = detectAges(sentence);
-          const byRegion = new Map<Region, string[]>();
-          for (const m of matches) {
-            for (const r of m.regions) {
-              const list = byRegion.get(r) ?? [];
-              if (!m.generic) list.push(m.term);
-              byRegion.set(r, list);
-            }
+          if (spec.type === 'adverse' && POPULATION.test(sentence)) continue;
+          const own = regionTerms(matchTerms(sentence, { therapeutic, adverse: spec.type === 'adverse' }));
+          let byRegion = own;
+          // A warning sentence is about its subsection's topic: "symptoms of thyroid tumors (... dyspnea)"
+          // under "Risk of Thyroid C-Cell Tumors" belongs to the thyroid, not the lungs.
+          const title = spec.type === 'warning' || spec.type === 'contraindication' ? (runInTitle(sentence) ?? seg.title ?? boxedTitle) : undefined;
+          const scope = title ? regionTerms(matchTerms(title, { therapeutic })) : undefined;
+          if (scope?.size) {
+            const scoped = new Map<Region, string[]>();
+            for (const [region, titleTerms] of scope) scoped.set(region, [...new Set([...(byRegion.get(region) ?? []), ...titleTerms])]);
+            byRegion = scoped;
           }
+          if (!byRegion.size) continue;
+          const ages = sentenceAges;
           for (const [region, terms] of byRegion) {
             hits.push({
               region,
@@ -214,6 +305,7 @@ export function extractEffects(label: OpenFdaLabel): StoredEffect[] {
               terms,
               sentence,
               clean: !isTableLike(sentence),
+              direct: own.has(region),
               ages,
               order,
             });
@@ -240,7 +332,7 @@ function stripBoxedTitle(segments: Segment[]): [Segment[], string | undefined] {
   return [[{ ...first, text: body.trim() }, ...rest], title ? `WARNING: ${title}` : undefined];
 }
 
-function groupHits(hits: Hit[]): StoredEffect[] {
+function groupHits(hits: Hit[]): ExtractedEffect[] {
   const groups = new Map<string, Hit[]>();
   for (const h of hits) {
     const key = [h.region, h.type, h.section, h.ages?.join(',') ?? ''].join('|');
@@ -248,7 +340,7 @@ function groupHits(hits: Hit[]): StoredEffect[] {
     list.push(h);
     groups.set(key, list);
   }
-  const effects: StoredEffect[] = [];
+  const effects: ExtractedEffect[] = [];
   for (const list of groups.values()) {
     const termCounts = new Map<string, { count: number; first: number }>();
     for (const h of list)
@@ -263,7 +355,7 @@ function groupHits(hits: Hit[]): StoredEffect[] {
       .map(([t]) => t);
     const clean = list
       .filter((h) => h.clean && h.sentence.length >= MIN_EXCERPT)
-      .sort((a, b) => excerptScore(b.sentence, b.type) - excerptScore(a.sentence, a.type) || a.order - b.order);
+      .sort((a, b) => excerptScore(b) - excerptScore(a) || a.order - b.order);
     const chosen: Hit[] = [];
     for (const h of clean) {
       if (chosen.length >= MAX_EXCERPTS) break;
@@ -271,7 +363,7 @@ function groupHits(hits: Hit[]): StoredEffect[] {
     }
     if (!terms.length && !chosen.length) continue;
     const lead = chosen[0] ?? list[0];
-    const effect: StoredEffect = {
+    const effect: ExtractedEffect = {
       region: lead.region,
       type: lead.type,
       terms,
@@ -337,33 +429,80 @@ export function titleCase(s: string): string {
     .trim();
 }
 
-/** Brand names that are not just the generic name, most frequent first. */
-export function collectBrands(labels: OpenFdaLabel[], generic: string, preferred: string[] = [], limit = 5): string[] {
+const genericMatches = (l: OpenFdaLabel, target: string) => (l.openfda?.generic_name ?? []).some((g) => normalizeGeneric(g) === target);
+const isOtc = (l: OpenFdaLabel) => !!l.openfda?.product_type?.some((p) => /OTC/i.test(p));
+const brandMatches = (brand: string, wanted: string) => {
+  const b = brand.toLowerCase().trim();
+  const w = wanted.toLowerCase();
+  return b === w || b.startsWith(`${w} `);
+};
+
+const NOT_A_BRAND = /\d|n\/a|diluent|relief|reducer|allergy|\bcold\b|\bflu\b|\bkit\b/i;
+
+/** Misspelled generic names sometimes appear as brand names ("Losortan Potassium"). */
+function nearGeneric(brand: string, generic: string): boolean {
+  const a = brand.split(' ')[0];
+  const b = generic.split(' ')[0];
+  if (Math.abs(a.length - b.length) > 3) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length] <= 3;
+}
+
+/**
+ * Brand names for search, taken only from labels of the same single-ingredient product.
+ * Prescription brands are ranked by how many labels carry them; OTC store-brand names ("Acid Reducer")
+ * are skipped unless the config names the brand and openFDA confirms it. Variants of a listed brand
+ * ("Lantus Solostar" after "Lantus") are dropped.
+ */
+export function collectBrands(labels: OpenFdaLabel[], config: DrugConfig, limit = 5): string[] {
+  const target = normalizeGeneric(config.generic ?? config.name);
+  const same = labels.filter((l) => genericMatches(l, target));
+  const named = [config.brand, ...(config.otcBrands ?? [])].filter((b): b is string => !!b);
+  const out: string[] = named.filter((b) => same.some((l) => l.openfda?.brand_name?.some((n) => brandMatches(n, b))));
   const counts = new Map<string, number>();
-  const g = normalizeGeneric(generic);
-  for (const l of labels) {
+  for (const l of same) {
+    if (isOtc(l)) continue;
     for (const b of l.openfda?.brand_name ?? []) {
       const n = normalizeGeneric(b);
-      if (!n || n.includes(g) || g.includes(n)) continue;
+      if (!n || n.includes(target) || target.includes(n) || NOT_A_BRAND.test(b) || nearGeneric(n, target)) continue;
       const name = titleCase(b.trim());
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
   }
-  const pref = preferred.map((p) => p.toLowerCase());
-  return [...counts.entries()]
-    .sort((a, b) => {
-      const pa = pref.indexOf(a[0].toLowerCase());
-      const pb = pref.indexOf(b[0].toLowerCase());
-      if (pa !== pb) return (pa === -1 ? 99 : pa) - (pb === -1 ? 99 : pb);
-      return b[1] - a[1] || a[0].localeCompare(b[0]);
-    })
-    .slice(0, limit)
-    .map(([b]) => b);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  for (const [name] of ranked) {
+    const first = name.split(' ')[0].toLowerCase();
+    if (out.some((b) => b.split(' ')[0].toLowerCase() === first)) continue;
+    out.push(name);
+  }
+  return out.slice(0, limit);
 }
 
-export function drugClass(label: OpenFdaLabel): string | undefined {
-  const epc = label.openfda?.pharm_class_epc?.[0];
-  return epc ? epc.replace(/\s*\[EPC\]\s*$/, '') : undefined;
+const epcName = (epc: string) => epc.replace(/\s*\[EPC\]\s*$/, '');
+
+/**
+ * Established pharmacologic class. openFDA's EPC annotation is missing on many single-ingredient labels and
+ * occasionally wrong, so a class counts only when at least two labels of the ingredient agree. Otherwise the
+ * label's own wording is used: "OZEMPIC is a glucagon-like peptide 1 (GLP-1) receptor agonist indicated ...".
+ */
+export function drugClass(label: OpenFdaLabel, sameIngredient: OpenFdaLabel[] = [label]): string | undefined {
+  const votes = new Map<string, number>();
+  for (const l of sameIngredient) for (const epc of l.openfda?.pharm_class_epc ?? []) votes.set(epcName(epc), (votes.get(epcName(epc)) ?? 0) + 1);
+  const own = (label.openfda?.pharm_class_epc ?? []).map(epcName);
+  const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1] || Number(own.includes(b[0])) - Number(own.includes(a[0])));
+  if (ranked[0] && ranked[0][1] >= 2) {
+    // Dual-action drugs carry two equally attested classes (carvedilol: alpha- and beta-adrenergic blocker).
+    return ranked[1]?.[1] === ranked[0][1] ? `${ranked[0][0]} · ${ranked[1][0]}` : ranked[0][0];
+  }
+  const text = cleanText((label.indications_and_usage ?? []).join(' '));
+  const m = text.match(/\b(?:is|are) an? ((?:[\w()/,'-]+ ){0,8}?[\w()/'-]+)\s+(?:that is |which is )?indicated\b/i);
+  if (!m || m[1].length > 60 || /\b(combination|member|product|specific)\b/i.test(m[1])) return undefined;
+  return m[1].charAt(0).toUpperCase() + m[1].slice(1);
 }
 
 export interface DrugConfig {
@@ -375,15 +514,18 @@ export interface DrugConfig {
   brand?: string;
   /** Use OTC labels instead of prescription labels. */
   otc?: boolean;
+  /** Well-known OTC brand names to make searchable; kept only if openFDA has a label with that brand. */
+  otcBrands?: string[];
   aliases?: string[];
 }
 
 /** Score candidate labels so the most complete, preferred, newest label wins. */
 export function pickLabel(labels: OpenFdaLabel[], config: DrugConfig): OpenFdaLabel | undefined {
   const target = normalizeGeneric(config.generic ?? config.name);
-  const candidates = labels.filter((l) => (l.openfda?.generic_name ?? []).some((g) => normalizeGeneric(g) === target));
+  const candidates = labels.filter((l) => genericMatches(l, target) && isOtc(l) === !!config.otc);
   const score = (l: OpenFdaLabel) =>
-    (config.brand && l.openfda?.brand_name?.some((b) => b.toLowerCase() === config.brand!.toLowerCase()) ? 1000 : 0) +
+    (config.brand && l.openfda?.brand_name?.some((b) => b.toLowerCase().trim() === config.brand!.toLowerCase()) ? 500 : 0) +
+    (config.brand && l.openfda?.brand_name?.some((b) => brandMatches(b, config.brand!)) ? 1000 : 0) +
     (l.adverse_reactions?.length ? 100 : 0) +
     (l.warnings_and_cautions?.length ? 50 : 0) +
     (l.indications_and_usage?.length ? 50 : 0) +
@@ -392,16 +534,21 @@ export function pickLabel(labels: OpenFdaLabel[], config: DrugConfig): OpenFdaLa
 }
 
 export function buildDrug(config: DrugConfig, label: OpenFdaLabel, brandSource: OpenFdaLabel[]): StoredDrug {
-  const brands = collectBrands(brandSource, config.generic ?? config.name, config.brand ? [config.brand] : []);
-  const drug: StoredDrug = {
-    id: config.id,
-    name: config.name,
-    brands,
-    label: labelSource(label),
-    effects: extractEffects(label),
-  };
+  const brands = collectBrands(brandSource, config);
+  const quotes: string[] = [];
+  const quoteIndex = new Map<string, number>();
+  const effects = extractEffects(label).map((e) => ({
+    ...e,
+    excerpts: e.excerpts.map((x) => {
+      if (!quoteIndex.has(x)) quoteIndex.set(x, quotes.push(x) - 1);
+      return quoteIndex.get(x)!;
+    }),
+  }));
+  const drug: StoredDrug = { id: config.id, name: config.name, brands, label: labelSource(label), quotes, effects };
   if (config.aliases?.length) drug.aliases = config.aliases;
-  const cls = drugClass(label);
+  // Innovator labels often lack openFDA's class annotation; other labels of the same ingredient carry it.
+  const target = normalizeGeneric(config.generic ?? config.name);
+  const cls = drugClass(label, [label, ...brandSource.filter((l) => l !== label && genericMatches(l, target))]);
   if (cls) drug.drugClass = cls;
   const notes = extractAgeNotes(label);
   if (notes) drug.ageNotes = notes;

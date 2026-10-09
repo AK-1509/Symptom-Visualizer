@@ -41,20 +41,58 @@ async function fetchLabels(search: string, attempt = 1): Promise<OpenFdaLabel[]>
   return body.results ?? [];
 }
 
-/** Fetch (or read cached) labels for one drug: the label pool and a broader brand-name pool. */
-async function labelsFor(config: DrugConfig): Promise<{ labels: OpenFdaLabel[]; brandPool: OpenFdaLabel[] }> {
-  const cache = join(rawDir, `${config.id}.json`);
-  if (!refresh && existsSync(cache)) return JSON.parse(await readFile(cache, 'utf8'));
+function genericQuery(config: DrugConfig): string {
   const tokens = normalizeGeneric(config.generic ?? config.name)
     .split(' ')
     .filter((t) => t !== 'and');
-  const generic = `openfda.generic_name:(${tokens.join('+AND+')})`;
+  return `openfda.generic_name:(${tokens.join('+AND+')})`;
+}
+
+async function fetchClassPool(config: DrugConfig): Promise<OpenFdaLabel[]> {
+  const labels = await fetchLabels(`${genericQuery(config)}+AND+_exists_:openfda.pharm_class_epc`);
+  await sleep(250);
+  // Only the class annotation is needed from these.
+  return labels.map((l) => ({ set_id: l.set_id, effective_time: l.effective_time, openfda: l.openfda }));
+}
+
+async function fetchByBrand(brand: string): Promise<OpenFdaLabel[]> {
+  const labels = await fetchLabels(`openfda.brand_name:"${brand}"`);
+  await sleep(250);
+  return labels;
+}
+
+/** Fetch (or read cached) labels for one drug: the label pool and a broader brand-name pool. */
+interface Raw {
+  labels: OpenFdaLabel[];
+  brandPool: OpenFdaLabel[];
+  /** Labels found by brand name (the configured brand and OTC brands), keyed by brand. */
+  byBrand?: Record<string, OpenFdaLabel[]>;
+  /** Labels of the same ingredient that carry an established pharmacologic class. */
+  classPool?: OpenFdaLabel[];
+}
+
+async function labelsFor(config: DrugConfig): Promise<Raw> {
+  const cache = join(rawDir, `${config.id}.json`);
+  const brands = [config.brand, ...(config.otcBrands ?? [])].filter((b): b is string => !!b);
+  if (!refresh && existsSync(cache)) {
+    const data = JSON.parse(await readFile(cache, 'utf8')) as Raw;
+    const missing = brands.filter((b) => !data.byBrand?.[b]);
+    if (!missing.length && data.classPool) return data;
+    data.byBrand ??= {};
+    for (const b of missing) data.byBrand[b] = await fetchByBrand(b);
+    data.classPool ??= await fetchClassPool(config);
+    await writeFile(cache, JSON.stringify(data));
+    return data;
+  }
+  const generic = genericQuery(config);
   const productType = config.otc ? 'HUMAN OTC DRUG' : 'HUMAN PRESCRIPTION DRUG';
   const labels = await fetchLabels(`${generic}+AND+openfda.product_type:"${productType}"`);
   await sleep(250);
   const brandPool = await fetchLabels(generic);
   await sleep(250);
-  const data = { labels, brandPool };
+  const byBrand: Record<string, OpenFdaLabel[]> = {};
+  for (const b of brands) byBrand[b] = await fetchByBrand(b);
+  const data: Raw = { labels, brandPool, byBrand, classPool: await fetchClassPool(config) };
   await writeFile(cache, JSON.stringify(data));
   return data;
 }
@@ -69,13 +107,16 @@ async function main() {
 
   for (const config of configs) {
     try {
-      const { labels, brandPool } = await labelsFor(config);
-      const label = pickLabel(labels, config) ?? pickLabel(brandPool, config);
+      const { labels, brandPool, byBrand = {}, classPool = [] } = await labelsFor(config);
+      const branded = Object.values(byBrand).flat();
+      const pool = [...branded, ...labels, ...brandPool];
+      const label = pickLabel(pool, config);
+      pool.push(...classPool);
       if (!label) {
         problems.push(`${config.id}: no matching label (${labels.length} candidates)`);
         continue;
       }
-      const drug = buildDrug(config, label, [...labels, ...brandPool]);
+      const drug = buildDrug(config, label, pool);
       if (!drug.effects.length) problems.push(`${config.id}: label found but no effects mapped`);
       built.set(drug.id, drug);
       const regions = new Set(drug.effects.map((e) => e.region));

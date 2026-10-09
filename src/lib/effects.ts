@@ -81,11 +81,15 @@ export function regionDetails(drug: Drug, region: Region, age: number): RegionDe
   return out;
 }
 
-/** Attach each label's provenance to every effect so no claim travels without its source. */
+/** Resolve excerpt references and attach each label's provenance to every effect, so no claim travels without its source. */
 export function hydrate(dataset: Dataset): Drug[] {
-  return dataset.drugs.map((d) => ({
-    ...d,
-    effects: d.effects.map((e) => ({ ...d.label, ...e })),
+  return dataset.drugs.map(({ quotes, effects, ...drug }) => ({
+    ...drug,
+    effects: effects.map((e) => ({
+      ...drug.label,
+      ...e,
+      excerpts: e.excerpts.map((i) => quotes[i]).filter((q) => q !== undefined),
+    })),
   }));
 }
 

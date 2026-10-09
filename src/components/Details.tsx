@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { REGION_INFO } from '../lib/anatomy.ts';
 import { AGE_LABEL, ageGroup, isAgeSpecificMatch, regionDetails, regionStates, visualType } from '../lib/effects.ts';
 import type { Drug, Effect, EffectType, Region } from '../lib/types.ts';
@@ -21,6 +22,7 @@ const HEADINGS: Record<EffectType, string> = {
 };
 
 function sourceLine(e: Pick<Effect, 'section' | 'sectionNumber' | 'sectionTitle'>): string {
+  if (e.sectionTitle === 'Highlights') return `${e.section} · Highlights${e.sectionNumber ? `, see Section ${e.sectionNumber}` : ''}`;
   const sub = [e.sectionNumber && `Section ${e.sectionNumber}`, e.sectionTitle].filter(Boolean).join(' ');
   return sub ? `${e.section} · ${sub}` : e.section;
 }
@@ -185,20 +187,36 @@ function DrugRegion({ drug, region, age, onSelectRegion }: { drug: Drug; region:
   return (
     <div className="sections">
       {present.map((type) => (
-        <section key={type} className={`effect-group group-${visualType(type)}`}>
-          <h3 className="eyebrow">
-            <Glyph type={type} />
-            {HEADINGS[type]}
-          </h3>
-          <ul>
-            {details[type].map((e, i) => (
-              <EffectItem key={i} effect={e} age={age} />
-            ))}
-          </ul>
-        </section>
+        <EffectGroup key={`${drug.id}-${region}-${type}`} type={type} effects={details[type]} age={age} />
       ))}
       {details.otherAges.length > 0 && <OtherAges effects={details.otherAges} age={age} />}
     </div>
+  );
+}
+
+const VISIBLE = 2;
+
+function EffectGroup({ type, effects, age }: { type: EffectType; effects: Effect[]; age: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? effects : effects.slice(0, VISIBLE);
+  const hidden = effects.length - shown.length;
+  return (
+    <section className={`effect-group group-${visualType(type)}`}>
+      <h3 className="eyebrow">
+        <Glyph type={type} />
+        {HEADINGS[type]}
+      </h3>
+      <ul>
+        {shown.map((e, i) => (
+          <EffectItem key={i} effect={e} age={age} />
+        ))}
+      </ul>
+      {hidden > 0 && (
+        <button className="more" onClick={() => setExpanded(true)}>
+          Show {hidden} more
+        </button>
+      )}
+    </section>
   );
 }
 

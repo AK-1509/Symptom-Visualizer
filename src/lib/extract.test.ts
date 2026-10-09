@@ -61,18 +61,32 @@ describe('label extraction', () => {
   });
 
   it('builds a drug with provenance, class, brands and age notes', () => {
-    const drug = buildDrug({ id: 'fixturemab', name: 'Fixturemab' }, FIXTURE_LABEL, [FIXTURE_LABEL]);
+    const drug = buildDrug({ id: 'fixturemab', name: 'Fixturemab' }, FIXTURE_LABEL, [FIXTURE_LABEL, { ...FIXTURE_LABEL, set_id: 'other' }]);
     expect(drug.label).toEqual({
       source: 'FDA Prescribing Information',
       sourceUrl: 'https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=00000000-0000-0000-0000-000000000000',
       labelDate: '2024-01-15',
       setId: '00000000-0000-0000-0000-000000000000',
-      labelTitle: 'Fixturex',
+      labelTitle: 'Zovarex',
     });
     expect(drug.drugClass).toBe('Fixture Receptor Agonist');
-    expect(drug.brands).toEqual(['Fixturex']);
-    expect(drug.ageNotes?.pediatric?.text).toBe('Safety and effectiveness of FIXTUREX have not been established in pediatric patients.');
+    // A class asserted by a single label is not trusted; without one, the label's own "is a ... indicated" wording is used.
+    expect(buildDrug({ id: 'f', name: 'Fixturemab' }, FIXTURE_LABEL, []).drugClass).toBeUndefined();
+    expect(drug.brands).toEqual(['Zovarex']);
+    expect(drug.ageNotes?.pediatric?.text).toBe('Safety and effectiveness of ZOVAREX have not been established in pediatric patients.');
     expect(drug.ageNotes?.pediatric?.sectionNumber).toBe('8.4');
+  });
+});
+
+describe('age carry-over', () => {
+  it('applies a lead-in age group to the bullets that follow it', () => {
+    const effects = extractEffects({
+      set_id: 'x',
+      effective_time: '20240101',
+      indications_and_usage: ['1 INDICATIONS AND USAGE ZOVAREX is indicated in adults for: • Hypertension • Heart failure ZOVAREX is indicated for asthma.'],
+    });
+    expect(effects.find((e) => e.region === 'heart')?.ages).toEqual(['adult']);
+    expect(effects.find((e) => e.region === 'lungs')?.ages).toBeUndefined();
   });
 });
 
@@ -103,7 +117,7 @@ describe('extraction helpers', () => {
     expect(normalizeGeneric('AMOXICILLIN AND CLAVULANATE POTASSIUM')).toBe('amoxicillin and clavulanate');
   });
 
-  it('prefers the configured brand label and ignores combination products', () => {
+  it('prefers the configured brand label and ignores combination products for labels and brands', () => {
     const base = { set_id: 'x', effective_time: '20200101', adverse_reactions: ['6 ADVERSE REACTIONS'] };
     const labels: OpenFdaLabel[] = [
       { ...base, set_id: 'generic', effective_time: '20250101', openfda: { generic_name: ['ATORVASTATIN CALCIUM'], brand_name: ['Atorvastatin Calcium'] } },
@@ -112,6 +126,6 @@ describe('extraction helpers', () => {
     ];
     expect(pickLabel(labels, { id: 'atorvastatin', name: 'Atorvastatin', brand: 'Lipitor' })?.set_id).toBe('brand');
     expect(pickLabel(labels, { id: 'atorvastatin', name: 'Atorvastatin' })?.set_id).toBe('generic');
-    expect(collectBrands(labels, 'atorvastatin')).toEqual(['Caduet', 'Lipitor']);
+    expect(collectBrands(labels, { id: 'atorvastatin', name: 'Atorvastatin' })).toEqual(['Lipitor']);
   });
 });
