@@ -3,10 +3,10 @@
   --panel: #11151b;
   --line: #1f2630;
   --line-strong: #2c3542;
-  /* All text stays light on the dark ground: primary, secondary and tertiary differ in brightness, not by going dark. */
-  --text: #f2f5f9;
-  --muted: #d0d7e0;
-  --faint: #b3bdc9;
+  /* All text is white on the dark ground; hierarchy comes from size, weight and spacing. */
+  --text: #ffffff;
+  --muted: #ffffff;
+  --faint: #ffffff;
 
   --body-fill: #151c25;
   --body-stroke: #344152;
@@ -36,7 +36,15 @@
 body {
   margin: 0;
   min-height: 100vh;
+  color: var(--text);
   background: radial-gradient(ellipse 60% 70% at 50% 45%, #121821 0%, var(--bg) 70%);
+}
+
+/* Hosts and browsers set their own text colours on body and form controls; every element is white here. */
+body *,
+body *::before,
+body *::after {
+  color: #ffffff;
 }
 
 body.is-dragging,
@@ -173,8 +181,8 @@ button {
 }
 
 .sex button.is-on {
-  background: var(--text);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--therapeutic) 45%, #0b0e12);
+  box-shadow: inset 0 0 0 1px var(--therapeutic);
 }
 
 .age {
@@ -284,7 +292,8 @@ input[type='range']::-moz-range-thumb {
 }
 
 .search input::placeholder {
-  color: var(--faint);
+  color: #ffffff;
+  opacity: 1;
 }
 
 .search input:focus {
@@ -773,13 +782,13 @@ input[type='range']::-moz-range-thumb {
 }
 
 .badge circle {
-  fill: var(--text);
-  stroke: var(--bg);
-  stroke-width: 1.5;
+  fill: var(--bg);
+  stroke: var(--text);
+  stroke-width: 1.2;
 }
 
 .badge text {
-  fill: var(--bg);
+  fill: var(--text);
   font-size: 7.5px;
   font-weight: 700;
   text-anchor: middle;
@@ -1011,7 +1020,7 @@ blockquote {
 
 .tag-boxed {
   border-color: var(--warning);
-  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 25%, transparent);
 }
 
 .glyph {
