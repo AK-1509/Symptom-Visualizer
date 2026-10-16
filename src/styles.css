@@ -3,9 +3,10 @@
   --panel: #11151b;
   --line: #1f2630;
   --line-strong: #2c3542;
-  --text: #e6eaf0;
-  --muted: #8a94a3;
-  --faint: #5b6574;
+  /* All text stays light on the dark ground: primary, secondary and tertiary differ in brightness, not by going dark. */
+  --text: #f2f5f9;
+  --muted: #d0d7e0;
+  --faint: #b3bdc9;
 
   --body-fill: #151c25;
   --body-stroke: #344152;
@@ -949,7 +950,7 @@ input[type='range']::-moz-range-thumb {
 }
 
 .effect.is-muted {
-  opacity: 0.55;
+  opacity: 0.85;
 }
 
 .terms {
@@ -983,7 +984,7 @@ input[type='range']::-moz-range-thumb {
 blockquote {
   margin: 0;
   font-size: 12.5px;
-  color: #c3cad4;
+  color: var(--text);
 }
 
 .cite {
